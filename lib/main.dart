@@ -1,127 +1,307 @@
-// Step 7 (Final): Change the app's theme
+import 'dart:async';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:flutter/material.dart';
-import 'package:english_words/english_words.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
-void main() => runApp(new MyApp());
+void main() => runApp(MyApp());
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   @override
-  Widget build(BuildContext context) {
-    return new MaterialApp(
-      title: 'Startup Name Generator',
-      theme: new ThemeData(//主题
-        primaryColor: Colors.white,
-      ),
-      home: new RandomWords(),
-    );
-  }
+  _MyAppState createState() => _MyAppState();
 }
 
-class RandomWords extends StatefulWidget {
+enum TtsState { playing, stopped, paused, continued }
+
+class _MyAppState extends State<MyApp> {
+  late FlutterTts flutterTts;
+  String? language;
+  double volume = 0.5;
+  double pitch = 1.0;
+  double rate = 0.5;
+  bool isCurrentLanguageInstalled = false;
+
+  String? _newVoiceText;
+
+  TtsState ttsState = TtsState.stopped;
+
+  get isPlaying => ttsState == TtsState.playing;
+  get isStopped => ttsState == TtsState.stopped;
+  get isPaused => ttsState == TtsState.paused;
+  get isContinued => ttsState == TtsState.continued;
+
+  bool get isIOS => !kIsWeb && Platform.isIOS;
+  bool get isAndroid => !kIsWeb && Platform.isAndroid;
+  bool get isWeb => kIsWeb;
+
   @override
-  createState() => new RandomWordsState();
-}
+  initState() {
+    super.initState();
+    initTts();
+  }
 
-class RandomWordsState extends State<RandomWords> {
-  final _suggestions = <WordPair>[]; //保存单词对 在Dart语言中使用下划线前缀标识符，会强制其变成私有的。
+  initTts() {
+    flutterTts = FlutterTts();
 
-  final _saved = new Set<WordPair>(); //收藏的单词
+    if (isAndroid) {
+      _getEngines();
+    }
 
-  final _biggerFont = const TextStyle(fontSize: 18.0); //增大字体大小
+    flutterTts.setStartHandler(() {
+      setState(() {
+        print("Playing");
+        ttsState = TtsState.playing;
+      });
+    });
+
+    flutterTts.setCompletionHandler(() {
+      setState(() {
+        print("Complete");
+        ttsState = TtsState.stopped;
+      });
+    });
+
+    flutterTts.setCancelHandler(() {
+      setState(() {
+        print("Cancel");
+        ttsState = TtsState.stopped;
+      });
+    });
+
+    if (isWeb || isIOS) {
+      flutterTts.setPauseHandler(() {
+        setState(() {
+          print("Paused");
+          ttsState = TtsState.paused;
+        });
+      });
+
+      flutterTts.setContinueHandler(() {
+        setState(() {
+          print("Continued");
+          ttsState = TtsState.continued;
+        });
+      });
+    }
+
+    flutterTts.setErrorHandler((msg) {
+      setState(() {
+        print("error: $msg");
+        ttsState = TtsState.stopped;
+      });
+    });
+  }
+
+  Future<dynamic> _getLanguages() => flutterTts.getLanguages;
+
+  Future _getEngines() async {
+    var engines = await flutterTts.getEngines;
+    if (engines != null) {
+      for (dynamic engine in engines) {
+        print(engine);
+      }
+    }
+  }
+
+  Future _speak() async {
+    await flutterTts.setVolume(volume);
+    await flutterTts.setSpeechRate(rate);
+    await flutterTts.setPitch(pitch);
+
+    if (_newVoiceText != null) {
+      if (_newVoiceText!.isNotEmpty) {
+        await flutterTts.awaitSpeakCompletion(true);
+        await flutterTts.speak(_newVoiceText!);
+      }
+    }
+  }
+
+  Future _stop() async {
+    var result = await flutterTts.stop();
+    if (result == 1) setState(() => ttsState = TtsState.stopped);
+  }
+
+  Future _pause() async {
+    var result = await flutterTts.pause();
+    if (result == 1) setState(() => ttsState = TtsState.paused);
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    flutterTts.stop();
+  }
+
+  List<DropdownMenuItem<String>> getLanguageDropDownMenuItems(
+      dynamic languages) {
+    var items = <DropdownMenuItem<String>>[];
+    for (dynamic type in languages) {
+      items.add(DropdownMenuItem(
+          value: type as String?, child: Text(type as String)));
+    }
+    return items;
+  }
+
+  void changedLanguageDropDownItem(String? selectedType) {
+    setState(() {
+      language = selectedType;
+      flutterTts.setLanguage(language!);
+      if (isAndroid) {
+        flutterTts
+            .isLanguageInstalled(language!)
+            .then((value) => isCurrentLanguageInstalled = (value as bool));
+      }
+    });
+  }
+
+  void _onChange(String text) {
+    setState(() {
+      _newVoiceText = text;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return new Scaffold(
-      appBar: new AppBar(
-        title: new Text('Startup Name Generator'),
-        actions: <Widget>[//加入跳转action
-          new IconButton(icon: new Icon(Icons.list), onPressed: _pushSaved)//启动的函数_pushSaved
-        ],
-      ),
-      body: _buildSuggestions(),
-    );
-  }
-
-  Widget _buildSuggestions() {
-    return new ListView.builder(
-      padding: const EdgeInsets.all(16.0),
-      // 对于每个建议的单词对都会调用一次itemBuilder，然后将单词对添加到ListTile行中
-      // 在偶数行，该函数会为单词对添加一个ListTile row.
-      // 在奇数行，该函数会添加一个分割线widget，来分隔相邻的词对。
-      // 注意，在小屏幕上，分割线看起来可能比较吃力。
-      itemBuilder: (context, i) {
-        // 在每一列之前，添加一个1像素高的分隔线widget
-        if (i.isOdd) return new Divider();
-        // 语法 "i ~/ 2" 表示i除以2，但返回值是整形（向下取整），比如i为：1, 2, 3, 4, 5
-        // 时，结果为0, 1, 1, 2, 2， 这可以计算出ListView中减去分隔线后的实际单词对数量
-        final index = i ~/ 2;
-        // 如果是建议列表中最后一个单词对
-        if (index >= _suggestions.length) {
-          // ...接着再生成10个单词对，然后添加到建议列表
-          _suggestions.addAll(generateWordPairs().take(10));
-        }
-        return _buildRow(_suggestions[index]);
-      },
-    );
-  }
-
-  Widget _buildRow(WordPair pair) {
-    final alreadySaved = _saved.contains(pair);
-    return new ListTile(
-      title: new Text(
-        pair.asPascalCase,
-        style: _biggerFont,
-      ),
-      trailing: new Icon(
-        alreadySaved ? Icons.favorite : Icons.favorite_border,
-        color: alreadySaved ? Colors.red : null,
-      ),
-      onTap: () {
-        setState(
-          () {
-            if (alreadySaved) {
-              _saved.remove(pair);
-            } else {
-              _saved.add(pair);
-            }
-          },
-        );
-      },
-    );
-  }
-
-  /**
-   * @description: 跳转按钮启动的函数 创建新页面，显示收藏的内容
-   * @return {*}
-   */
-  void _pushSaved() {
-    Navigator.of(context).push(
-      new MaterialPageRoute(
-        builder: (context) {
-          final tiles = _saved.map(
-            (pair) {
-              return new ListTile(
-                title: new Text(
-                  pair.asPascalCase,
-                  style: _biggerFont,
-                ),
-              );
-            },
-          );
-          final divided = ListTile.divideTiles(
-            context: context,
-            tiles: tiles,
-          ).toList();
-
-          return new Scaffold(
-            appBar: new AppBar(
-              title: new Text('Saved Suggestions'),
+    return MaterialApp(
+        home: Scaffold(
+            appBar: AppBar(
+              title: Text('Flutter TTS'),
             ),
-            body: new ListView(children: divided),
-          );
+            body: SingleChildScrollView(
+                scrollDirection: Axis.vertical,
+                child: Column(children: [
+                  _inputSection(),
+                  _btnSection(),
+                  _futureBuilder(),
+                  _buildSliders()
+                ]))));
+  }
+
+  Widget _futureBuilder() => FutureBuilder<dynamic>(
+      future: _getLanguages(),
+      builder: (BuildContext context, AsyncSnapshot<dynamic> snapshot) {
+        if (snapshot.hasData) {
+          return _languageDropDownSection(snapshot.data);
+        } else if (snapshot.hasError) {
+          return Text('Error loading languages...');
+        } else
+          return Text('Loading Languages...');
+      });
+
+  Widget _inputSection() => Container(
+      alignment: Alignment.topCenter,
+      padding: EdgeInsets.only(top: 25.0, left: 25.0, right: 25.0),
+      child: TextField(
+        onChanged: (String value) {
+          _onChange(value);
         },
-      ),
+      ));
+
+  Widget _btnSection() {
+    if (isAndroid) {
+      return Container(
+          padding: EdgeInsets.only(top: 50.0),
+          child:
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            _buildButtonColumn(Colors.green, Colors.greenAccent,
+                Icons.play_arrow, 'PLAY', _speak),
+            _buildButtonColumn(
+                Colors.red, Colors.redAccent, Icons.stop, 'STOP', _stop),
+          ]));
+    } else {
+      return Container(
+          padding: EdgeInsets.only(top: 50.0),
+          child:
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            _buildButtonColumn(Colors.green, Colors.greenAccent,
+                Icons.play_arrow, 'PLAY', _speak),
+            _buildButtonColumn(
+                Colors.red, Colors.redAccent, Icons.stop, 'STOP', _stop),
+            _buildButtonColumn(
+                Colors.blue, Colors.blueAccent, Icons.pause, 'PAUSE', _pause),
+          ]));
+    }
+  }
+
+  Widget _languageDropDownSection(dynamic languages) => Container(
+      padding: EdgeInsets.only(top: 50.0),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        DropdownButton(
+          value: language,
+          items: getLanguageDropDownMenuItems(languages),
+          onChanged: changedLanguageDropDownItem,
+        ),
+        Visibility(
+          visible: isAndroid,
+          child: Text("Is installed: $isCurrentLanguageInstalled"),
+        ),
+      ]));
+
+  Column _buildButtonColumn(Color color, Color splashColor, IconData icon,
+      String label, Function func) {
+    return Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(
+              icon: Icon(icon),
+              color: color,
+              splashColor: splashColor,
+              onPressed: () => func()),
+          Container(
+              margin: const EdgeInsets.only(top: 8.0),
+              child: Text(label,
+                  style: TextStyle(
+                      fontSize: 12.0,
+                      fontWeight: FontWeight.w400,
+                      color: color)))
+        ]);
+  }
+
+  Widget _buildSliders() {
+    return Column(
+      children: [_volume(), _pitch(), _rate()],
+    );
+  }
+
+  Widget _volume() {
+    return Slider(
+        value: volume,
+        onChanged: (newVolume) {
+          setState(() => volume = newVolume);
+        },
+        min: 0.0,
+        max: 1.0,
+        divisions: 10,
+        label: "Volume: $volume");
+  }
+
+  Widget _pitch() {
+    return Slider(
+      value: pitch,
+      onChanged: (newPitch) {
+        setState(() => pitch = newPitch);
+      },
+      min: 0.5,
+      max: 2.0,
+      divisions: 15,
+      label: "Pitch: $pitch",
+      activeColor: Colors.red,
+    );
+  }
+
+  Widget _rate() {
+    return Slider(
+      value: rate,
+      onChanged: (newRate) {
+        setState(() => rate = newRate);
+      },
+      min: 0.0,
+      max: 1.0,
+      divisions: 10,
+      label: "Rate: $rate",
+      activeColor: Colors.green,
     );
   }
 }

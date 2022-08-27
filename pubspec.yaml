@@ -36,7 +36,9 @@ dependencies:
   cupertino_icons: ^1.0.2
   chinese_words: ^0.0.1
   english_words: ^4.0.0
-
+  dio: ^4.0.6
+  flutter_tts: ^3.5.1
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter
